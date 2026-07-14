@@ -1,4 +1,4 @@
-name: Bootstrap Caltrain Watch
+name: Restore Caltrain Watch source
 
 on:
   push:
@@ -10,78 +10,65 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
-  group: bootstrap-pages
+  group: restore-caltrain-watch
   cancel-in-progress: false
 
 jobs:
-  build:
+  restore:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Restore project archive
+      - name: Restore source tree
+        shell: python
         run: |
-          cat .bootstrap/part-* | base64 --decode > /tmp/caltrain-watch.zip
-          unzip -q /tmp/caltrain-watch.zip -d /tmp/restored
-          rsync -a --delete --exclude='.git/' /tmp/restored/caltrain-watch/ ./
+          import base64
+          import shutil
+          import zipfile
+          from pathlib import Path
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
+          root = Path.cwd()
+          encoded = "".join(
+              part.read_text(encoding="utf-8").strip()
+              for part in sorted((root / ".bootstrap").glob("part-*"))
+          )
+          archive_path = Path("/tmp/caltrain-watch.zip")
+          archive_path.write_bytes(base64.b64decode(encoded, validate=True))
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+          restored = Path("/tmp/caltrain-watch-restored")
+          if restored.exists():
+              shutil.rmtree(restored)
+          restored.mkdir(parents=True)
+          with zipfile.ZipFile(archive_path) as archive:
+              archive.testzip()
+              archive.extractall(restored)
 
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+          source = restored / "caltrain-watch"
+          if not (source / "README.md").exists():
+              raise RuntimeError("Restored archive is missing the source tree")
 
-      - name: Run Python tests
-        run: python -m unittest discover -s tests -p "test_*.py"
+          for item in root.iterdir():
+              if item.name == ".git":
+                  continue
+              if item.is_dir():
+                  shutil.rmtree(item)
+              else:
+                  item.unlink()
 
-      - name: Run JavaScript tests
-        run: npm test
+          for item in source.iterdir():
+              target = root / item.name
+              if item.is_dir():
+                  shutil.copytree(item, target)
+              else:
+                  shutil.copy2(item, target)
 
-      - name: Build current snapshot
-        env:
-          TRANSIT_511_API_KEY: ${{ secrets.TRANSIT_511_API_KEY }}
-          TRANSIT_511_OPERATOR_ID: ${{ vars.TRANSIT_511_OPERATOR_ID || 'CT' }}
-        run: python scripts/build_data.py --output public/data/caltrain.json
-
-      - name: Commit restored project
+      - name: Commit source tree
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Build Caltrain Watch" || true
-          git push
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          git commit -m "Restore Caltrain Watch source"
+          git push origin HEAD:main
