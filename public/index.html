@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#bf1e2e">
+  <meta name="description" content="Track Caltrain departures and cancellations for the stops you care about.">
+  <title>Caltrain Watch</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="background-orb orb-one"></div>
+  <div class="background-orb orb-two"></div>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Caltrain Watch home">
+        <span class="brand-mark">C</span>
+        <span><strong>Caltrain</strong> Watch</span>
+      </a>
+      <div class="feed-state">
+        <span id="status" class="status-badge">Loading</span>
+        <span id="updated">Fetching data…</span>
+        <button id="refresh" class="icon-button" aria-label="Refresh data" title="Refresh">↻</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Your peninsula commute, distilled</p>
+        <h1>Know your train<br>before you leave.</h1>
+        <p class="hero-copy">Choose the stops that matter. See the next trains, delays, cancellations, and relevant service alerts in one calm view.</p>
+      </div>
+      <div class="route-card">
+        <div class="route-field">
+          <label for="origin">From</label>
+          <select id="origin"></select>
+        </div>
+        <button id="swap" class="swap-button" aria-label="Swap stops">⇅</button>
+        <div class="route-field">
+          <label for="destination">To</label>
+          <select id="destination"></select>
+        </div>
+        <button id="notify" class="primary-button">Enable cancellation alerts</button>
+        <p class="notification-note">Browser notifications work while this page or installed app is running.</p>
+      </div>
+    </section>
+
+    <div id="data-notice" class="data-notice" hidden></div>
+
+    <section class="content-grid">
+      <div>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Upcoming</p>
+            <h2 id="route-summary">Your route</h2>
+          </div>
+          <span class="refresh-copy">Snapshot refreshed by GitHub Actions</span>
+        </div>
+        <div id="departures" class="departures"></div>
+        <div id="empty" class="empty-state" hidden>
+          <span>◷</span>
+          <h3>No more matching trains in this snapshot.</h3>
+          <p>Try swapping direction or refresh after the next data update.</p>
+        </div>
+      </div>
+
+      <aside>
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Service status</p>
+            <h2>Relevant alerts</h2>
+          </div>
+        </div>
+        <div id="alerts" class="alerts"></div>
+        <div class="source-card">
+          <span class="source-icon">↗</span>
+          <div>
+            <strong>Official transit data</strong>
+            <p>Schedules, trip updates, and service alerts come from the 511 SF Bay open-data feeds.</p>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <footer>
+      <span>Caltrain Watch is an independent project and is not affiliated with Caltrain.</span>
+      <span>Data may be delayed; confirm critical trips with the operator.</span>
+    </footer>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
