@@ -1,0 +1,12 @@
+{
+  "name": "Caltrain Watch",
+  "short_name": "Train Watch",
+  "description": "Caltrain departures and cancellation alerts for your selected stops.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f6f1ea",
+  "theme_color": "#bf1e2e",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
