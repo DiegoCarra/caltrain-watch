@@ -11,7 +11,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  issues: write
 
 concurrency:
   group: pages
@@ -21,8 +20,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    outputs:
-      data_mode: ${{ steps.snapshot.outputs.mode }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -37,7 +34,6 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
       - name: Build current Caltrain snapshot
-        id: snapshot
         env:
           TRANSIT_511_API_KEY: ${{ secrets.TRANSIT_511_API_KEY }}
           TRANSIT_511_OPERATOR_ID: ${{ vars.TRANSIT_511_OPERATOR_ID || 'CT' }}
@@ -53,8 +49,6 @@ jobs:
           fi
           touch public/.nojekyll
           python -m json.tool public/data/caltrain.json >/dev/null
-          mode=$(python -c "import json; print(json.load(open('public/data/caltrain.json'))['mode'])")
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
 
       - name: Read GitHub Pages configuration
         uses: actions/configure-pages@v6
@@ -75,36 +69,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-  report-status:
-    if: ${{ always() }}
-    needs: [build, deploy]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Record deployment status
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const success = '${{ needs.build.result }}' === 'success' && '${{ needs.deploy.result }}' === 'success';
-            const title = 'Caltrain Watch deployment status';
-            const pageUrl = 'https://diegocarra.github.io/caltrain-watch/';
-            const body = [
-              success ? '## Deployment successful' : '## Deployment failed',
-              '',
-              `- Build/configure stage: **${{ needs.build.result }}**`,
-              `- Pages deployment stage: **${{ needs.deploy.result }}**`,
-              `- Data snapshot: **${{ needs.build.outputs.data_mode || 'unknown' }}**`,
-              `- [Open the exact workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
-              `- [Open the website](${pageUrl})`
-            ].join('\n');
-            const issues = await github.rest.issues.listForRepo({ owner: context.repo.owner, repo: context.repo.repo, state: 'all', per_page: 100 });
-            const statusIssue = issues.data.find(issue => issue.title === title && !issue.pull_request);
-            if (statusIssue) {
-              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: statusIssue.number, body, state: 'open' });
-            } else {
-              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
-            }
-            if (success) {
-              const oldFailure = issues.data.find(issue => issue.title === 'Caltrain Watch deployment failure' && !issue.pull_request && issue.state === 'open');
-              if (oldFailure) await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: oldFailure.number, state: 'closed', state_reason: 'completed' });
-            }
