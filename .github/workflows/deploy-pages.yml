@@ -51,11 +51,8 @@ jobs:
           touch public/.nojekyll
           python -m json.tool public/data/caltrain.json >/dev/null
 
-      - name: Configure GitHub Pages
+      - name: Read GitHub Pages configuration
         uses: actions/configure-pages@v6
-        with:
-          enablement: true
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
@@ -85,20 +82,15 @@ jobs:
           script: |
             const title = 'Caltrain Watch deployment failure';
             const body = [
-              'The deployment workflow failed after the latest automatic repair.',
+              'The deployment workflow failed.',
               '',
               `- Build/configure stage: **${{ needs.build.result }}**`,
               `- Pages deployment stage: **${{ needs.deploy.result }}**`,
               `- [Open the exact workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
               '',
-              'This issue was created automatically so the failing stage can be inspected through the connected GitHub tools.'
+              'If the build/configure stage failed, confirm **Settings → Pages → Build and deployment → Source** is set to **GitHub Actions**.'
             ].join('\n');
-            const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              per_page: 100
-            });
+            const existing = await github.rest.issues.listForRepo({ owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100 });
             const match = existing.data.find(issue => issue.title === title && !issue.pull_request);
             if (match) {
               await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: match.number, body });
