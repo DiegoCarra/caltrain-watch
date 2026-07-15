@@ -11,6 +11,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  issues: write
 
 concurrency:
   group: pages
@@ -20,6 +21,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      data_mode: ${{ steps.verify.outputs.data_mode }}
+      commute_ui: ${{ steps.verify.outputs.commute_ui }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -29,6 +33,11 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Install data dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
@@ -50,6 +59,20 @@ jobs:
           touch public/.nojekyll
           python -m json.tool public/data/caltrain.json >/dev/null
 
+      - name: Verify commute build
+        id: verify
+        shell: bash
+        run: |
+          node --check public/app.js
+          node --check public/core.mjs
+          npm test
+          grep -q '8:07 AM' public/core.mjs
+          grep -q '4:56 PM' public/core.mjs
+          grep -q 'commute-mode' public/index.html
+          mode=$(python -c "import json; print(json.load(open('public/data/caltrain.json'))['mode'])")
+          echo "data_mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "commute_ui=verified" >> "$GITHUB_OUTPUT"
+
       - name: Read GitHub Pages configuration
         uses: actions/configure-pages@v6
 
@@ -69,3 +92,32 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  report-status:
+    if: ${{ always() }}
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record commute deployment status
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const success = '${{ needs.build.result }}' === 'success' && '${{ needs.deploy.result }}' === 'success';
+            const title = 'Caltrain Watch commute deployment status';
+            const body = [
+              success ? '## Commute update deployed' : '## Commute update failed',
+              '',
+              `- Build and tests: **${{ needs.build.result }}**`,
+              `- Pages deployment: **${{ needs.deploy.result }}**`,
+              `- Data snapshot: **${{ needs.build.outputs.data_mode || 'unknown' }}**`,
+              `- Commute UI verification: **${{ needs.build.outputs.commute_ui || 'unknown' }}**`,
+              `- [Open the workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              `- [Open the website](https://diegocarra.github.io/caltrain-watch/)`
+            ].join('\n');
+            const issues = await github.rest.issues.listForRepo({ owner: context.repo.owner, repo: context.repo.repo, state: 'all', per_page: 100 });
+            const issue = issues.data.find(item => item.title === title && !item.pull_request);
+            if (issue) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number, body, state: 'open' });
+            } else {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+            }
