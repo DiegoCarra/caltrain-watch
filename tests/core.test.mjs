@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { matchingTrips, minutesLate, relevantAlerts, tripServesRoute } from "../public/core.mjs";
+import {
+  matchingTrips,
+  minutesLate,
+  preferredTripForDeparture,
+  relevantAlerts,
+  routeTrips,
+  tripServesRoute,
+  weekdayCommutePreference
+} from "../public/core.mjs";
 
 const trip = {
   id: "T1", routeId: "R1", cancelled: false,
@@ -22,6 +30,32 @@ test("matchingTrips uses realtime departure and sorts", () => {
   later.id = "T2";
   later.stops[0].realtimeDepartureEpoch = 1500;
   assert.deepEqual(matchingTrips({ trips: [later, trip] }, "A", "C", 900).map((item) => item.id), ["T1", "T2"]);
+});
+
+test("routeTrips includes scheduled and realtime endpoint times", () => {
+  const [mapped] = routeTrips({ trips: [trip] }, "A", "C");
+  assert.equal(mapped.originTime, 1300);
+  assert.equal(mapped.scheduledOriginTime, 1000);
+  assert.equal(mapped.scheduledDestinationTime, 2200);
+});
+
+test("weekday commute chooses morning and afternoon directions", () => {
+  assert.deepEqual(weekdayCommutePreference(new Date("2026-07-15T08:00:00-07:00")), {
+    period: "morning", originName: "Millbrae", destinationName: "Hillsdale", targetMinutes: 487, targetLabel: "8:07 AM"
+  });
+  assert.deepEqual(weekdayCommutePreference(new Date("2026-07-15T16:00:00-07:00")), {
+    period: "evening", originName: "Hillsdale", destinationName: "Millbrae", targetMinutes: 1016, targetLabel: "4:56 PM"
+  });
+  assert.equal(weekdayCommutePreference(new Date("2026-07-18T08:00:00-07:00")), null);
+});
+
+test("preferred trip selects the exact scheduled departure", () => {
+  const epoch = (value) => Date.parse(value) / 1000;
+  const trips = [
+    { id: "early", stops: [{ id: "M", departureEpoch: epoch("2026-07-15T08:02:00-07:00") }] },
+    { id: "preferred", stops: [{ id: "M", departureEpoch: epoch("2026-07-15T08:07:00-07:00") }] }
+  ];
+  assert.equal(preferredTripForDeparture(trips, "M", 487)?.id, "preferred");
 });
 
 test("minutesLate rounds delay", () => assert.equal(minutesLate(trip, "A"), 5));
