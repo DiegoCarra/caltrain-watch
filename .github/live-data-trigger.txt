@@ -1,2 +1,2 @@
 Trigger live deployment after configuring TRANSIT_511_API_KEY.
-Run requested from ChatGPT.
+Run requested from ChatGPT after enabling GitHub Pages.
