@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111111">
+  <meta name="description" content="A rider-powered explanation layer for Caltrain delays, combining official real-time data with fresh reports from people on the train and platform.">
+  <title>Why is the Caltrain late?</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="site-header">
+      <a class="wordmark" href="./" aria-label="Why is the Caltrain late home">
+        <span class="signal-dot" aria-hidden="true"></span>
+        <span>why is the caltrain late?</span>
+      </a>
+      <div class="header-actions">
+        <span id="feed-freshness" class="freshness">loading live data…</span>
+        <button id="report-top" class="button button-dark" type="button">Report what you see</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <p class="kicker">THE MISSING EXPLANATION LAYER</p>
+      <h1>We know it’s late.<br><em>Why?</em></h1>
+      <p class="hero-copy">Official feeds tell you the delay. Riders often know the cause first. We combine both, show the evidence, and tell you exactly how confident we are.</p>
+      <div class="hero-stats" aria-live="polite">
+        <div><strong id="active-count">—</strong><span>active delays</span></div>
+        <div><strong id="report-count">—</strong><span>recent rider reports</span></div>
+        <div><strong id="last-updated">—</strong><span>data age</span></div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Delay filters">
+      <div class="search-wrap">
+        <label for="train-search">Find your train</label>
+        <input id="train-search" inputmode="numeric" autocomplete="off" placeholder="e.g. 503" maxlength="12">
+      </div>
+      <div class="filter-wrap">
+        <label for="direction-filter">Direction</label>
+        <select id="direction-filter">
+          <option value="all">All trains</option>
+          <option value="northbound">Northbound</option>
+          <option value="southbound">Southbound</option>
+        </select>
+      </div>
+    </section>
+
+    <div id="data-notice" class="notice" hidden></div>
+
+    <section class="main-grid">
+      <div>
+        <div class="section-title-row">
+          <div>
+            <p class="kicker">RIGHT NOW</p>
+            <h2>What’s holding things up</h2>
+          </div>
+          <span class="legend"><i class="dot crowd"></i> rider evidence <i class="dot official"></i> official data</span>
+        </div>
+        <div id="incident-list" class="incident-list" aria-live="polite"></div>
+        <div id="empty-state" class="empty-state" hidden>
+          <div class="empty-icon">✓</div>
+          <h3>No matching active delays.</h3>
+          <p>That can mean things are running well — or nobody has reported this train yet.</p>
+        </div>
+      </div>
+
+      <aside class="report-panel" id="report-panel">
+        <p class="kicker">YOU’RE THE SENSOR</p>
+        <h2>What are you seeing?</h2>
+        <p class="aside-copy">A platform sign, conductor announcement, or train that hasn’t moved can be more useful than another “10 minute delay” alert.</p>
+
+        <form id="report-form">
+          <div class="field-row two">
+            <label>Train number
+              <input id="report-train" name="train" inputmode="numeric" placeholder="503" required maxlength="12">
+            </label>
+            <label>Minutes late
+              <input id="report-delay" name="delay" inputmode="numeric" type="number" min="0" max="360" placeholder="25">
+            </label>
+          </div>
+
+          <label>Where are you?
+            <input id="report-station" name="station" list="station-options" placeholder="San Mateo" required maxlength="80">
+            <datalist id="station-options"></datalist>
+          </label>
+
+          <label>What seems to be happening?
+            <select id="report-category" name="category" required>
+              <option value="">Choose one…</option>
+              <option value="held">Train is being held / not moving</option>
+              <option value="train-traffic">Waiting for another train / congestion</option>
+              <option value="signal">Signal or dispatch issue</option>
+              <option value="crossing">Crossing / track obstruction</option>
+              <option value="police-fire">Police or fire activity</option>
+              <option value="medical">Medical emergency</option>
+              <option value="mechanical">Mechanical / equipment issue</option>
+              <option value="boarding">Long boarding / crowding</option>
+              <option value="unknown">I can confirm the delay, not the cause</option>
+            </select>
+          </label>
+
+          <label>How do you know?
+            <select id="report-source" name="source" required>
+              <option value="">Choose one…</option>
+              <option value="crew-announcement">Conductor / crew announcement</option>
+              <option value="station-board">Station board / platform display</option>
+              <option value="visual">I can directly see it</option>
+              <option value="other-rider">Another rider told me</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+
+          <label>Details <span class="optional">optional</span>
+            <textarea id="report-details" name="details" rows="3" maxlength="500" placeholder="“Conductor said we’re waiting for a disabled train ahead near Burlingame.”"></textarea>
+          </label>
+
+          <button class="button button-red full" type="submit">Submit rider report</button>
+          <p class="form-note">MVP: reports are stored as public GitHub issues. You’ll get one final GitHub confirmation screen, which also gives us spam resistance and an audit trail.</p>
+          <p id="form-status" class="form-status" role="status"></p>
+        </form>
+      </aside>
+    </section>
+
+    <section class="method">
+      <div>
+        <p class="kicker">HOW THE ANSWER IS MADE</p>
+        <h2>No mystery confidence score.</h2>
+      </div>
+      <div class="method-steps">
+        <article><span>1</span><strong>Official timing</strong><p>511 GTFS-realtime gives the baseline delay and cancellations.</p></article>
+        <article><span>2</span><strong>Independent reports</strong><p>We cluster recent reports by train, location, and cause instead of treating every tip equally.</p></article>
+        <article><span>3</span><strong>Evidence agreement</strong><p>Confidence rises when separate riders agree or official alerts corroborate the same event.</p></article>
+        <article><span>4</span><strong>Contradictions stay visible</strong><p>If the board says 25 minutes and the feed says 10, we show both instead of averaging the disagreement away.</p></article>
+      </div>
+    </section>
+
+    <footer>
+      <span>Independent rider project. Not affiliated with Caltrain.</span>
+      <span>Never use crowd reports for emergency decisions; follow crew and emergency personnel.</span>
+    </footer>
+  </main>
+
+  <template id="incident-template">
+    <article class="incident-card">
+      <div class="incident-topline">
+        <div class="train-identity"><span class="train-number"></span><span class="direction"></span></div>
+        <div class="delay-chip"></div>
+      </div>
+      <h3 class="reason"></h3>
+      <p class="summary"></p>
+      <div class="comparison"></div>
+      <div class="confidence-row">
+        <div><span class="confidence-label"></span><div class="confidence-track"><div class="confidence-fill"></div></div></div>
+        <button class="evidence-toggle" type="button" aria-expanded="false">Show evidence</button>
+      </div>
+      <div class="evidence" hidden></div>
+    </article>
+  </template>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
