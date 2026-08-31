@@ -3,12 +3,15 @@ name: Refresh data and deploy Pages
 on:
   push:
     branches: [main]
+  issues:
+    types: [opened, edited, closed, reopened]
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+  issues: read
   pages: write
   id-token: write
 
@@ -49,6 +52,13 @@ jobs:
           fi
           touch public/.nojekyll
           python -m json.tool public/data/caltrain.json >/dev/null
+
+      - name: Build rider explanation snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/build_reports.py --caltrain public/data/caltrain.json --output public/why/reports.json
+          python -m json.tool public/why/reports.json >/dev/null
 
       - name: Read GitHub Pages configuration
         uses: actions/configure-pages@v6
