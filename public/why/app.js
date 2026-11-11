@@ -1,3 +1,5 @@
+import { snapshotForDisplay, snapshotHealth } from '../core.mjs';
+
 const DATA_URL = '../data/caltrain.json';
 const REPORTS_URL = './reports.json';
 const REPORT_REPO = 'DiegoCarra/caltrain-watch';
@@ -52,9 +54,6 @@ function activeTrip(trip) {
   const end = trip?.stops?.at(-1)?.arrivalEpoch ?? -Infinity;
   return now >= start - 3600 && now <= end + 7200;
 }
-function matchedIncident(trainNumber) {
-  return reports.incidents?.find((item) => String(item.trainNumber) === String(trainNumber));
-}
 function officialAlertsFor(trip) {
   return (data.alerts || []).filter((alert) => {
     if (alert.tripIds?.includes(trip.id)) return true;
@@ -64,10 +63,14 @@ function officialAlertsFor(trip) {
 }
 function createViewModels() {
   const byTrain = new Map();
-  for (const trip of data.trips || []) {
+  const displayData = snapshotForDisplay(data);
+  const health = snapshotHealth(data);
+  const reportAge = Date.now() - Date.parse(reports.generatedAt || '');
+  const currentReports = reportAge >= 0 && reportAge <= 15 * 60_000 ? reports.incidents || [] : [];
+  for (const trip of health.realtime ? displayData.trips : []) {
     if (!activeTrip(trip)) continue;
     const delay = officialDelay(trip);
-    const crowd = matchedIncident(trip.trainNumber);
+    const crowd = currentReports.find((item) => String(item.trainNumber) === String(trip.trainNumber));
     const alerts = officialAlertsFor(trip);
     if (delay < 5 && !trip.cancelled && !crowd && alerts.length === 0) continue;
     byTrain.set(String(trip.trainNumber), {
@@ -78,7 +81,7 @@ function createViewModels() {
       consensusCount: crowd?.consensusCount || 0, station: crowd?.station || null, category: crowd?.category || null,
     });
   }
-  for (const crowd of reports.incidents || []) {
+  for (const crowd of currentReports) {
     const key = String(crowd.trainNumber);
     if (byTrain.has(key)) continue;
     byTrain.set(key, { trainNumber: key, trip: null, direction: crowd.direction || 'unknown direction', officialDelayMinutes: crowd.officialDelayMinutes ?? 0, crowdDelayMinutes: crowd.crowdDelayMinutes ?? null, reason: crowd.reason, summary: crowd.summary, confidence: crowd.confidence, reports: crowd.reports || [], officialAlerts: crowd.officialAlerts || [], consensusCount: crowd.consensusCount || 0, station: crowd.station || null, category: crowd.category || null });
@@ -155,7 +158,7 @@ function render() {
     list.append(card);
   }
   $('#active-count').textContent = String(items.length);
-  $('#report-count').textContent = String(reports.reportCount || 0);
+  $('#report-count').textContent = String(items.reduce((total, item) => total + item.reports.length, 0));
   $('#last-updated').textContent = ageLabel(data.generatedAt);
   $('#feed-freshness').textContent = `official feed ${ageLabel(data.generatedAt)} old`;
 }
@@ -193,22 +196,29 @@ function issueUrl(form) {
   const query = new URLSearchParams({ title, body });
   return `https://github.com/${REPORT_REPO}/issues/new?${query.toString()}`;
 }
+let loading = false;
 async function load() {
+  if (loading) return;
+  loading = true;
   try {
-    const [officialResponse, reportResponse] = await Promise.all([fetch(DATA_URL, { cache: 'no-store' }), fetch(REPORTS_URL, { cache: 'no-store' })]);
+    const [officialResponse, reportResponse] = await Promise.all([fetch(DATA_URL, { cache: 'no-store', signal: AbortSignal.timeout(20_000) }), fetch(REPORTS_URL, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })]);
     if (!officialResponse.ok) throw new Error(`official feed returned ${officialResponse.status}`);
     data = await officialResponse.json();
     if (reportResponse.ok) reports = await reportResponse.json();
     populateStations();
-    if (data.mode !== 'live') {
+    const health = snapshotHealth(data);
+    notice.hidden = health.realtime;
+    if (!health.realtime) {
       notice.hidden = false;
-      notice.textContent = 'Official live data is unavailable, so the site is showing fallback data. Rider reports may still be current.';
+      notice.textContent = health.notice || 'Official live updates are unavailable. Rider reports may still be current.';
     }
     render();
   } catch (error) {
     notice.hidden = false;
     notice.textContent = `Could not load the latest delay feed: ${error.message}`;
     render();
+  } finally {
+    loading = false;
   }
 }
 $('#train-search').addEventListener('input', render);
@@ -229,3 +239,5 @@ $('#report-form').addEventListener('submit', (event) => {
   $('#form-status').textContent = 'GitHub opened with your report pre-filled. Submit it there to publish it.';
 });
 load();
+setInterval(() => { if (!document.hidden) load(); }, 60_000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });

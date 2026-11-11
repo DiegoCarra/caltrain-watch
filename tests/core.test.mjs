@@ -6,6 +6,9 @@ import {
   preferredTripForDeparture,
   relevantAlerts,
   routeTrips,
+  serviceDateAt,
+  snapshotForDisplay,
+  snapshotHealth,
   tripServesRoute,
   weekdayCommutePreference
 } from "../public/core.mjs";
@@ -59,6 +62,56 @@ test("preferred trip selects the exact scheduled departure", () => {
 });
 
 test("minutesLate rounds delay", () => assert.equal(minutesLate(trip, "A"), 5));
+
+const snapshot = {
+  mode: "live", generatedAt: "2026-11-10T16:00:00-08:00", serviceDate: "2026-11-10",
+  trips: [{ ...trip, cancelled: true }], alerts: [{ id: "old-alert" }]
+};
+
+test("freshness uses Pacific dates even across UTC midnight", () => {
+  const at = new Date("2026-11-11T00:05:00Z");
+  assert.equal(serviceDateAt(at), "2026-11-10");
+  assert.equal(snapshotHealth(snapshot, at).realtime, true);
+  assert.equal(snapshotForDisplay(snapshot, at), snapshot);
+});
+
+test("same-day stale snapshots keep schedule but remove live status", () => {
+  const at = new Date("2026-11-10T16:16:00-08:00");
+  const health = snapshotHealth(snapshot, at);
+  assert.equal(health.stale, true);
+  assert.equal(health.realtime, false);
+  const display = snapshotForDisplay(snapshot, at);
+  assert.equal(display.trips[0].cancelled, false);
+  assert.equal(display.trips[0].stops[0].realtimeDepartureEpoch, null);
+  assert.equal(display.trips[0].stops[0].departureEpoch, 1000);
+  assert.deepEqual(display.alerts, []);
+  assert.equal(snapshot.trips[0].cancelled, true, "source is unchanged");
+});
+
+test("old service dates cannot display historical preferred trains", () => {
+  const at = new Date("2026-11-11T08:00:00-08:00");
+  const display = snapshotForDisplay(snapshot, at);
+  assert.deepEqual(display.trips, []);
+  assert.deepEqual(display.alerts, []);
+  assert.match(snapshotHealth(snapshot, at).notice, /earlier service date/);
+});
+
+test("a date rollover marks even a recently generated snapshot stale", () => {
+  const nearMidnight = { ...snapshot, generatedAt: "2026-11-10T23:59:00-08:00" };
+  assert.equal(snapshotHealth(nearMidnight, new Date("2026-11-11T00:01:00-08:00")).stale, true);
+});
+
+test("schedule-only data never claims live status", () => {
+  const health = snapshotHealth({ ...snapshot, mode: "schedule" }, new Date("2026-11-10T16:05:00-08:00"));
+  assert.equal(health.realtime, false);
+  assert.equal(health.label, "Schedule only");
+});
+
+test("invalid or future generation timestamps cannot claim to be live", () => {
+  const at = new Date("2026-11-10T16:05:00-08:00");
+  assert.equal(snapshotHealth({ ...snapshot, generatedAt: "bad" }, at).realtime, false);
+  assert.equal(snapshotHealth({ ...snapshot, generatedAt: "2026-11-10T17:00:00-08:00" }, at).realtime, false);
+});
 
 test("relevantAlerts matches stop, route, or systemwide alerts", () => {
   const data = { alerts: [

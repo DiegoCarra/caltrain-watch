@@ -5,6 +5,8 @@ import io
 import sys
 import unittest
 import zipfile
+import tempfile
+from unittest.mock import Mock, patch
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,6 +20,53 @@ spec.loader.exec_module(build_data)
 
 
 class BuildDataTests(unittest.TestCase):
+    def schedule_zip(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("stops.txt", "stop_id,stop_name\nA,Alpha\nB,Beta\n")
+            archive.writestr("routes.txt", "route_id,route_short_name\nR,Rail\n")
+            archive.writestr("trips.txt", "route_id,service_id,trip_id\nR,S,T\n")
+            archive.writestr("stop_times.txt", "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT,08:00:00,08:00:00,A,1\nT,09:00:00,09:00:00,B,2\n")
+        return buffer.getvalue()
+
+    def test_schedule_cache_avoids_repeated_full_downloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(build_data, "fetch", return_value=self.schedule_zip()) as fetch:
+                first = build_data.cached_schedule(Mock(), {}, Path(directory))
+                second = build_data.cached_schedule(Mock(), {}, Path(directory))
+                self.assertEqual(first, second)
+                fetch.assert_called_once()
+
+    def test_realtime_failure_keeps_real_schedule_without_demo_or_live_claims(self):
+        def response(session, endpoint, params):
+            if endpoint == "datafeeds":
+                return self.schedule_zip()
+            if endpoint == "tripupdates":
+                raise RuntimeError("511 tripupdates returned HTTP 429")
+            return b""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(build_data, "fetch", side_effect=response):
+                snapshot = build_data.fetch_snapshot(Mock(), "secret", "CT", Path(directory))
+        self.assertEqual(snapshot["mode"], "schedule")
+        self.assertEqual(snapshot["trips"][0]["id"], "T")
+        self.assertEqual(snapshot["trips"][0]["stops"][0]["name"], "Alpha")
+        self.assertFalse(snapshot["trips"][0]["cancelled"])
+        self.assertIsNone(snapshot["trips"][0]["stops"][0]["realtimeDepartureEpoch"])
+        self.assertEqual(snapshot["alerts"], [])
+
+    def test_http_failure_does_not_expose_key_in_error(self):
+        session = Mock()
+        session.get.return_value.ok = False
+        session.get.return_value.status_code = 429
+        with self.assertRaisesRegex(RuntimeError, "^511 tripupdates returned HTTP 429$"):
+            build_data.fetch(session, "tripupdates", {"api_key": "secret"})
+
+    def test_empty_current_schedule_is_not_published(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(build_data, "cached_schedule", return_value=self.schedule_zip()), patch.object(build_data, "fetch", return_value=b""), patch.object(build_data, "build_live", return_value={"trips": []}):
+                with self.assertRaisesRegex(RuntimeError, "no active Caltrain trips"):
+                    build_data.fetch_snapshot(Mock(), "secret", "CT", Path(directory))
+
     def test_gtfs_time_after_midnight(self):
         epoch = build_data.gtfs_epoch(date(2026, 7, 14), "25:12:30")
         moment = datetime.fromtimestamp(epoch, ZoneInfo("America/Los_Angeles"))

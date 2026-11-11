@@ -1,5 +1,42 @@
 export const CALTRAIN_TIME_ZONE = "America/Los_Angeles";
 
+export function serviceDateAt(at = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CALTRAIN_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(at);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+export function snapshotHealth(data, at = new Date()) {
+  const age = at.getTime() - Date.parse(data.generatedAt);
+  const currentServiceDate = data.serviceDate === serviceDateAt(at);
+  const stale = !Number.isFinite(age) || age > 15 * 60_000 || age < -5 * 60_000 || !currentServiceDate;
+  const realtime = data.mode === "live" && !stale;
+  const label = stale ? "Updates delayed" : data.mode === "demo" ? "Demo data" : realtime ? "Live feed" : "Schedule only";
+  const notice = stale
+    ? (currentServiceDate
+      ? "Live updates have stopped. Showing today's schedule only; delays, cancellations, and alerts are unavailable. Check Caltrain for current service."
+      : "Train updates have stopped and this snapshot is from an earlier service date. Today's departures are unavailable here. Check Caltrain for current service.")
+    : data.notice || "";
+  return { stale, realtime, currentServiceDate, label, notice };
+}
+
+export function snapshotForDisplay(data, at = new Date()) {
+  const health = snapshotHealth(data, at);
+  if (!health.currentServiceDate) return { ...data, trips: [], alerts: [] };
+  if (!health.stale) return data;
+  return {
+    ...data, alerts: [],
+    trips: data.trips.map((trip) => ({
+      ...trip, cancelled: false,
+      stops: trip.stops.map((stop) => ({
+        ...stop, realtimeArrivalEpoch: null, realtimeDepartureEpoch: null, skipped: false
+      }))
+    }))
+  };
+}
+
 export function stopIndex(trip, stopId) {
   return trip.stops.findIndex((stop) => stop.id === stopId);
 }

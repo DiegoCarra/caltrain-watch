@@ -15,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -268,31 +269,79 @@ def build_demo(now: datetime | None = None) -> dict[str, Any]:
 
 
 def fetch(session: requests.Session, endpoint: str, params: dict[str, str]) -> bytes:
-    response = session.get(f"{BASE_URL}/{endpoint}", params=params, timeout=(10, 45))
-    response.raise_for_status()
+    try:
+        response = session.get(f"{BASE_URL}/{endpoint}", params=params, timeout=(10, 45))
+    except requests.RequestException:
+        # Requests errors can include the API key in their URL. Never log it.
+        raise RuntimeError(f"Could not reach 511 {endpoint}") from None
+    if not response.ok:
+        raise RuntimeError(f"511 {endpoint} returned HTTP {response.status_code}")
     if not response.content:
         raise RuntimeError(f"Empty response from {endpoint}")
     return response.content
+
+
+def cached_schedule(session: requests.Session, params: dict[str, str], cache_dir: Path) -> bytes:
+    cache = cache_dir / "schedule.zip"
+    if cache.exists() and 0 <= datetime.now().timestamp() - cache.stat().st_mtime < 86400:
+        payload = cache.read_bytes()
+        try:
+            parse_gtfs(payload)
+            return payload
+        except (zipfile.BadZipFile, UnicodeError):
+            pass
+    payload = fetch(session, "datafeeds", params)
+    parse_gtfs(payload)  # Never cache an HTTP-200 error page as a schedule.
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(payload)
+    return payload
+
+
+def fetch_snapshot(session: requests.Session, api_key: str, operator: str, cache_dir: Path) -> dict[str, Any]:
+    common = {"api_key": api_key}
+    schedule = cached_schedule(session, {**common, "operator_id": operator}, cache_dir)
+    realtime: dict[str, bytes] = {}
+    problems = []
+    for endpoint, validate in (("tripupdates", parse_updates), ("servicealerts", lambda payload: parse_alerts(payload, {}))):
+        try:
+            payload = fetch(session, endpoint, {**common, "agency": operator})
+            validate(payload)
+            realtime[endpoint] = payload
+        except (RuntimeError, DecodeError):
+            realtime[endpoint] = b""
+            problems.append(endpoint)
+    snapshot = build_live(schedule, realtime["tripupdates"], realtime["servicealerts"])
+    if not snapshot["trips"]:
+        raise RuntimeError("511 schedule contains no active Caltrain trips for today")
+    if problems:
+        # Keep real scheduled trains, never substitute fictional demo trains.
+        snapshot["mode"] = "schedule"
+        snapshot["alerts"] = []
+        for trip in snapshot["trips"]:
+            trip["cancelled"] = False
+            for stop in trip["stops"]:
+                stop.update(realtimeArrivalEpoch=None, realtimeDepartureEpoch=None, skipped=False)
+        snapshot["notice"] = "Live updates are unavailable. Showing the official schedule only; check Caltrain for delays, cancellations, and alerts."
+        print(f"::warning::511 realtime unavailable ({', '.join(problems)}); keeping official scheduled trains")
+    return snapshot
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("public/data/caltrain.json"))
     parser.add_argument("--demo", action="store_true")
+    parser.add_argument("--cache-dir", type=Path, default=Path(".cache/511"))
     args = parser.parse_args()
     api_key = os.getenv("TRANSIT_511_API_KEY", "").strip()
     operator = os.getenv("TRANSIT_511_OPERATOR_ID", DEFAULT_OPERATOR_ID).strip() or DEFAULT_OPERATOR_ID
-    if args.demo or not api_key:
+    if args.demo:
         snapshot = build_demo()
     else:
+        if not api_key:
+            raise RuntimeError("TRANSIT_511_API_KEY is missing; refusing to publish demo trains over the live site")
         session = requests.Session()
         session.headers["User-Agent"] = "caltrain-watch/1.0"
-        common = {"api_key": api_key}
-        snapshot = build_live(
-            fetch(session, "datafeeds", {**common, "operator_id": operator}),
-            fetch(session, "tripupdates", {**common, "agency": operator}),
-            fetch(session, "servicealerts", {**common, "agency": operator}),
-        )
+        snapshot = fetch_snapshot(session, api_key, operator, args.cache_dir)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {args.output} ({snapshot['mode']}, {len(snapshot['trips'])} trips)")

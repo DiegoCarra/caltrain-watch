@@ -5,6 +5,8 @@ import {
   preferredTripForDeparture,
   relevantAlerts,
   routeTrips,
+  snapshotForDisplay,
+  snapshotHealth,
   weekdayCommutePreference
 } from "./core.mjs";
 
@@ -124,7 +126,7 @@ function renderDepartures(trips, preferredTrip = null) {
     const actualArrival = destination?.realtimeArrivalEpoch ?? scheduledArrival;
     const departed = actualDeparture && actualDeparture < Date.now() / 1000 - 60;
     const selected = trip.id === preferredId;
-    const statusText = trip.cancelled ? "Cancelled" : departed ? "Departed" : late > 0 ? `${late} min late` : "On time";
+    const statusText = trip.cancelled ? "Cancelled" : departed ? "Departed" : !snapshotHealth(state.data).realtime || origin?.realtimeDepartureEpoch == null ? "Scheduled" : late > 0 ? `${late} min late` : "On time";
     const pillClass = trip.cancelled ? "cancelled" : late >= 5 ? "delay" : "";
     const preferredLabel = selected ? `<span class="preferred-label">Selected commute · ${escapeHtml(state.commute?.targetLabel || formatTime(scheduledDeparture))}</span>` : "";
     return `<article class="departure ${trip.cancelled ? "cancelled" : ""} ${selected ? "preferred" : ""}" ${selected ? 'aria-current="true"' : ""}>
@@ -142,6 +144,10 @@ function renderDepartures(trips, preferredTrip = null) {
 }
 
 function renderAlerts(alerts) {
+  if (!snapshotHealth(state.data).realtime) {
+    els.alerts.innerHTML = `<article class="alert-card"><h3>Live alerts unavailable</h3><p>Current delays and cancellations cannot be confirmed. <a href="https://www.caltrain.com/status" target="_blank" rel="noreferrer">Check Caltrain service status</a></p></article>`;
+    return;
+  }
   if (!alerts.length) {
     els.alerts.innerHTML = `<article class="alert-card"><h3>No relevant active alerts</h3><p>The current feed has no service alert matching your selected route.</p></article>`;
     return;
@@ -150,6 +156,7 @@ function renderAlerts(alerts) {
 }
 
 function notifyNew(trips, alerts, force = false) {
+  if (!state.data || !snapshotHealth(state.data).realtime) return;
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   let seen = [];
   try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"); } catch { seen = []; }
@@ -163,16 +170,32 @@ function notifyNew(trips, alerts, force = false) {
 
 function render({ notify = true } = {}) {
   if (!state.data) return;
+  const health = snapshotHealth(state.data);
+  const data = snapshotForDisplay(state.data);
+  els.status.textContent = health.label;
+  els.status.className = `status-badge ${health.realtime ? "live" : "demo"}`;
+  const generatedAt = new Date(state.data.generatedAt);
+  els.updated.textContent = Number.isFinite(generatedAt.getTime())
+    ? `Updated ${new Intl.DateTimeFormat([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: CALTRAIN_TIME_ZONE }).format(generatedAt)}`
+    : "Update time unavailable";
+  els.notice.hidden = !health.notice;
+  els.notice.textContent = health.notice;
+  els.empty.querySelector("h3").textContent = health.currentServiceDate
+    ? "No more matching trains in this snapshot."
+    : "Today's train schedule is unavailable.";
+  els.empty.querySelector("p").textContent = health.currentServiceDate
+    ? "Try swapping direction or refresh after the next data update."
+    : "Updates have stopped. Use the official Caltrain schedule until they resume.";
   applyWeekdayCommute();
-  const allTrips = routeTrips(state.data, state.originId, state.destinationId);
-  const upcomingTrips = matchingTrips(state.data, state.originId, state.destinationId);
+  const allTrips = routeTrips(data, state.originId, state.destinationId);
+  const upcomingTrips = matchingTrips(data, state.originId, state.destinationId);
   const preferredTrip = state.commute
     ? preferredTripForDeparture(allTrips, state.originId, state.commute.targetMinutes)
     : null;
   const displayTrips = preferredTrip
     ? [preferredTrip, ...upcomingTrips.filter((trip) => trip.id !== preferredTrip.id)]
     : upcomingTrips;
-  const alerts = relevantAlerts(state.data, state.originId, state.destinationId, allTrips);
+  const alerts = relevantAlerts(data, state.originId, state.destinationId, allTrips);
   els.summary.textContent = `${stopName(state.originId)} → ${stopName(state.destinationId)}`;
   updateCommuteMode(preferredTrip);
   renderDepartures(displayTrips, preferredTrip);
@@ -181,24 +204,26 @@ function render({ notify = true } = {}) {
   if (notify) notifyNew(allTrips, alerts);
 }
 
+let loading = false;
 async function loadData({ initial = false } = {}) {
+  if (loading) return;
+  loading = true;
   els.refresh.disabled = true;
   try {
-    const response = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store" });
+    const response = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const first = !state.data;
     state.data = await response.json();
     if (first || initial) fillStops();
-    els.status.textContent = state.data.mode === "live" ? "Live feed" : "Demo data";
-    els.status.className = `status-badge ${state.data.mode === "live" ? "live" : "demo"}`;
-    els.updated.textContent = `Updated ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit", timeZone: CALTRAIN_TIME_ZONE }).format(new Date(state.data.generatedAt))}`;
-    els.notice.hidden = !state.data.notice;
-    els.notice.textContent = state.data.notice || "";
     render();
   } catch (error) {
+    if (state.data) render({ notify: false });
     els.status.textContent = "Data unavailable";
+    els.status.className = "status-badge demo";
     els.updated.textContent = error.message;
-  } finally { els.refresh.disabled = false; }
+    els.notice.hidden = false;
+    els.notice.textContent = "Could not fetch the latest snapshot. Check Caltrain for current service.";
+  } finally { els.refresh.disabled = false; loading = false; }
 }
 
 els.origin.addEventListener("change", () => { disableAutoCommute(); state.originId = els.origin.value; render({ notify: false }); });
@@ -210,6 +235,7 @@ els.notify.addEventListener("click", async () => {
   const permission = await Notification.requestPermission();
   els.notify.textContent = permission === "granted" ? "Cancellation alerts enabled" : "Enable cancellation alerts";
   if (permission === "granted") {
+    if (!state.data) return;
     const trips = routeTrips(state.data, state.originId, state.destinationId);
     notifyNew(trips, relevantAlerts(state.data, state.originId, state.destinationId, trips), true);
   }
@@ -217,4 +243,5 @@ els.notify.addEventListener("click", async () => {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js");
 loadData({ initial: true });
-setInterval(loadData, 60_000);
+setInterval(() => { if (!document.hidden) loadData(); }, 60_000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadData(); });

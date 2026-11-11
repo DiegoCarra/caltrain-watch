@@ -1,4 +1,4 @@
-const CACHE = "caltrain-watch-v2";
+const CACHE = "caltrain-watch-v3";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./core.mjs", "./icon.svg", "./manifest.webmanifest"];
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -12,9 +12,18 @@ self.addEventListener("activate", (event) => event.waitUntil(
 ));
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.endsWith("/data/caltrain.json")) {
-    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
-    return;
-  }
-  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+  if (url.origin !== self.location.origin || event.request.method !== "GET") return;
+  // Network first: an installed app must not keep serving old JavaScript forever.
+  const cacheKey = url.pathname.endsWith("/data/caltrain.json") ? url.origin + url.pathname : event.request;
+  event.respondWith(caches.open(CACHE).then(async (cache) => {
+    try {
+      const response = await fetch(event.request);
+      if (response.ok) await cache.put(cacheKey, response.clone());
+      return response;
+    } catch (error) {
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+      throw error;
+    }
+  }));
 });
