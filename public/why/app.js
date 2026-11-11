@@ -116,6 +116,12 @@ function render() {
   });
   list.replaceChildren();
   emptyState.hidden = items.length > 0;
+  const realtime = snapshotHealth(data).realtime;
+  emptyState.querySelector('h3').textContent = realtime ? 'No matching active delays.' : 'Current delay status is unavailable.';
+  emptyState.querySelector('p').textContent = realtime
+    ? 'That can mean things are running well — or nobody has reported this train yet.'
+    : 'Live updates are unavailable. Check Caltrain for current service.';
+  emptyState.querySelector('.empty-icon').textContent = realtime ? '✓' : '◷';
   for (const item of items) {
     const card = incidentTemplate.content.firstElementChild.cloneNode(true);
     card.querySelector('.train-number').textContent = `Train ${item.trainNumber}`;
